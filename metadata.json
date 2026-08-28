@@ -1,0 +1,6 @@
+{
+  "name": "YourPayouts",
+  "description": "Upload payout PDFs and shipment Excels, extract orders and tracking data automatically, manage master records, and export formatted Excel workbooks.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
