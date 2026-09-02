@@ -1,6 +1,12 @@
 import { getDatabase, saveDatabase } from "./db";
 import type { PayoutRecord, ImportBatch, Settings } from "../lib/payout/types";
 import type { ShipmentRecord, ShipmentBatch, ShipmentSettings } from "../lib/shipment/types";
+import {
+  calculatePayoutAnalytics,
+  type AnalyticsPeriod,
+  type CurrencyCode,
+} from "../lib/payout/analytics";
+import { calculateShipmentAnalytics, type ShipmentRange } from "../lib/shipment/analytics";
 
 function jsonResponse(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -71,6 +77,38 @@ export async function handleApiRequest(request: Request): Promise<Response> {
     }
 
     // -------------------------------------------------------------
+    // GET /api/dashboard/shipments or /api/shipments/summary
+    // (aggregated analytics for shipment overview chart)
+    // -------------------------------------------------------------
+    if (
+      (path === "/api/dashboard/shipments" || path === "/api/shipments/summary") &&
+      method === "GET"
+    ) {
+      const range = (url.searchParams.get("range") || "12d") as ShipmentRange;
+      const db = await getDatabase();
+      const analytics = calculateShipmentAnalytics(db.shipments, range);
+      return jsonResponse(analytics);
+    }
+
+    // -------------------------------------------------------------
+    // GET /api/dashboard/payouts (aggregated analytics for chart)
+    // -------------------------------------------------------------
+    if (path === "/api/dashboard/payouts" && method === "GET") {
+      const period = (url.searchParams.get("period") || "30d") as AnalyticsPeriod;
+      const currency = (url.searchParams.get("currency") || "usd") as CurrencyCode;
+      const timeZone = url.searchParams.get("tz") || "Asia/Karachi";
+      const db = await getDatabase();
+      const analytics = calculatePayoutAnalytics(
+        db.payouts,
+        period,
+        db.payoutSettings?.avgRate ?? 1.27,
+        currency,
+        timeZone,
+      );
+      return jsonResponse(analytics);
+    }
+
+    // -------------------------------------------------------------
     // GET /api/payouts
     // -------------------------------------------------------------
     if (path === "/api/payouts" && method === "GET") {
@@ -93,8 +131,16 @@ export async function handleApiRequest(request: Request): Promise<Response> {
         settings?: Settings;
       };
 
+      const nowIso = new Date().toISOString();
+      const processedRecords = body.records?.map((p) => ({
+        ...p,
+        importedAt: p.importedAt || nowIso,
+        payout_uploaded_at: p.payout_uploaded_at || p.importedAt || nowIso,
+        payout_processed_at: p.payout_processed_at || nowIso,
+      }));
+
       const updated = await saveDatabase((db) => {
-        if (body.records) db.payouts = body.records;
+        if (processedRecords) db.payouts = processedRecords;
         if (body.batches) db.payoutBatches = body.batches;
         if (body.settings) db.payoutSettings = body.settings;
       });
@@ -130,6 +176,15 @@ export async function handleApiRequest(request: Request): Promise<Response> {
 
       const incomingPayouts = Array.isArray(body.payoutRecords) ? body.payoutRecords : [];
       const newBatch = body.batch;
+      const processingTimestamp = new Date().toISOString();
+
+      // Ensure every incoming payout record has the backend upload/processing timestamp
+      const stampedIncomingPayouts: PayoutRecord[] = incomingPayouts.map((p) => ({
+        ...p,
+        importedAt: p.importedAt || processingTimestamp,
+        payout_uploaded_at: p.payout_uploaded_at || p.importedAt || processingTimestamp,
+        payout_processed_at: p.payout_processed_at || processingTimestamp,
+      }));
 
       const db = await getDatabase();
       const shipments = [...db.shipments];
@@ -155,7 +210,7 @@ export async function handleApiRequest(request: Request): Promise<Response> {
       let markedReceived = 0;
       const unmatchedOrders: Array<{ orderNumber: string; result: string }> = [];
 
-      for (const payout of incomingPayouts) {
+      for (const payout of stampedIncomingPayouts) {
         const rawOrderNum = payout.orderNumber || "";
         const normalized = normalizeOrderNumber(rawOrderNum);
 
@@ -194,7 +249,7 @@ export async function handleApiRequest(request: Request): Promise<Response> {
       }
 
       // Merge and save payout records
-      const mergedPayouts = [...existingPayouts, ...incomingPayouts];
+      const mergedPayouts = [...existingPayouts, ...stampedIncomingPayouts];
       const mergedBatches = newBatch ? [newBatch, ...existingBatches] : existingBatches;
 
       await saveDatabase((data) => {

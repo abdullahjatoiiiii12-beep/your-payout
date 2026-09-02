@@ -27,6 +27,9 @@ export interface PayoutRecord {
   country: string;
   sourceFile: string;
   importedAt: string;
+  /** Exact ISO timestamp when payout order was uploaded/processed in system */
+  payout_uploaded_at?: string;
+  payout_processed_at?: string;
 }
 
 export interface ImportBatch {

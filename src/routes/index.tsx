@@ -162,13 +162,22 @@ function Index() {
     const seen = new Set(records.map((r) => r.dupKey));
     const fresh: PayoutRecord[] = [];
     let duplicates = 0;
-    const importedAt = new Date().toISOString();
+    const nowIso = new Date().toISOString();
+    const importedAt = nowIso;
+    const payout_uploaded_at = nowIso;
+    const payout_processed_at = nowIso;
 
     for (const rec of extracted) {
       const isDuplicate = seen.has(rec.dupKey);
       if (isDuplicate) duplicates++;
       seen.add(rec.dupKey);
-      fresh.push({ ...rec, isDuplicate, importedAt });
+      fresh.push({
+        ...rec,
+        isDuplicate,
+        importedAt,
+        payout_uploaded_at,
+        payout_processed_at,
+      });
     }
     await sleep(150);
 
