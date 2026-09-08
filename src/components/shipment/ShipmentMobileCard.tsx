@@ -1,15 +1,17 @@
 import { useState } from "react";
-import { ChevronDown, ChevronUp, Package, Calendar, Truck, User } from "lucide-react";
+import { ChevronDown, ChevronUp, Package, Calendar, Truck, User, Trash2 } from "lucide-react";
 import type { ShipmentRecord, ShipmentStatus } from "@/lib/shipment/types";
 
 export function ShipmentMobileCard({
   record,
   index,
   renderStatusBadge,
+  onDelete,
 }: {
   record: ShipmentRecord;
   index: number;
   renderStatusBadge: (st: ShipmentStatus) => React.ReactNode;
+  onDelete?: () => void;
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -51,7 +53,20 @@ export function ShipmentMobileCard({
           )}
         </div>
 
-        <div className="shrink-0">{renderStatusBadge(record.status)}</div>
+        <div className="shrink-0 flex items-center gap-1.5">
+          {renderStatusBadge(record.status)}
+          {onDelete && (
+            <button
+              type="button"
+              aria-label={`Delete record ${record.orderNumber || record.trackingNumber}`}
+              title="Delete record"
+              onClick={onDelete}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Bundle / Order Details */}

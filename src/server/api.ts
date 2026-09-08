@@ -1,4 +1,13 @@
-import { getDatabase, saveDatabase } from "./db";
+import {
+  getDatabase,
+  saveDatabase,
+  verifySupabaseTables,
+  deleteShipmentFromDatabase,
+  deletePayoutFromDatabase,
+} from "./db";
+import { getSupabaseConfig } from "./supabase";
+import fs from "node:fs/promises";
+import nodePath from "node:path";
 import type { PayoutRecord, ImportBatch, Settings } from "../lib/payout/types";
 import type { ShipmentRecord, ShipmentBatch, ShipmentSettings } from "../lib/shipment/types";
 import {
@@ -30,6 +39,59 @@ export async function handleApiRequest(request: Request): Promise<Response> {
 
   try {
     // -------------------------------------------------------------
+    // GET /api/supabase/status
+    // -------------------------------------------------------------
+    if (path === "/api/supabase/status" && method === "GET") {
+      const config = getSupabaseConfig();
+      return jsonResponse({
+        success: true,
+        supabase: config,
+      });
+    }
+
+    // -------------------------------------------------------------
+    // GET /api/database/status
+    // -------------------------------------------------------------
+    if (path === "/api/database/status" && method === "GET") {
+      const status = await verifySupabaseTables();
+      return jsonResponse({
+        success: true,
+        database: status,
+      });
+    }
+
+    // -------------------------------------------------------------
+    // GET /api/database/schema
+    // -------------------------------------------------------------
+    if (path === "/api/database/schema" && method === "GET") {
+      try {
+        const candidatePaths = [
+          nodePath.join(process.cwd(), "supabase_tables.sql"),
+          nodePath.resolve("supabase_tables.sql"),
+          "/app/applet/supabase_tables.sql",
+        ];
+        let sql = "";
+        for (const p of candidatePaths) {
+          try {
+            sql = await fs.readFile(p, "utf-8");
+            if (sql) break;
+          } catch {
+            // continue
+          }
+        }
+        if (!sql) {
+          throw new Error(
+            "Could not locate supabase_tables.sql in paths: " + candidatePaths.join(", "),
+          );
+        }
+        return jsonResponse({ success: true, sql });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return jsonResponse({ success: false, error: msg }, 500);
+      }
+    }
+
+    // -------------------------------------------------------------
     // GET /api/shipments
     // -------------------------------------------------------------
     if (path === "/api/shipments" && method === "GET") {
@@ -53,8 +115,29 @@ export async function handleApiRequest(request: Request): Promise<Response> {
       };
 
       const updated = await saveDatabase((db) => {
-        if (body.records) db.shipments = body.records;
-        if (body.batches) db.shipmentBatches = body.batches;
+        if (body.records) {
+          // Merge with existing master records to prevent accidental overwrite
+          const map = new Map<string, ShipmentRecord>();
+          for (const s of db.shipments || []) {
+            const key = s.dupKey || s.id || `${s.orderNumber}|${s.trackingNumber}`;
+            map.set(key, s);
+          }
+          for (const s of body.records) {
+            const key = s.dupKey || s.id || `${s.orderNumber}|${s.trackingNumber}`;
+            map.set(key, s);
+          }
+          db.shipments = Array.from(map.values());
+        }
+        if (body.batches) {
+          const bMap = new Map<string, ShipmentBatch>();
+          for (const b of db.shipmentBatches || []) {
+            bMap.set(b.id, b);
+          }
+          for (const b of body.batches) {
+            bMap.set(b.id, b);
+          }
+          db.shipmentBatches = Array.from(bMap.values());
+        }
         if (body.settings) db.shipmentSettings = body.settings;
       });
 
@@ -74,6 +157,32 @@ export async function handleApiRequest(request: Request): Promise<Response> {
         db.shipmentBatches = [];
       });
       return jsonResponse({ success: true });
+    }
+
+    // -------------------------------------------------------------
+    // POST /api/shipments/delete or DELETE /api/shipments/:id
+    // -------------------------------------------------------------
+    if (
+      (path === "/api/shipments/delete" && method === "POST") ||
+      (path.startsWith("/api/shipments/") && method === "DELETE")
+    ) {
+      let idToDelete = "";
+      if (method === "DELETE") {
+        idToDelete = decodeURIComponent(path.replace("/api/shipments/", ""));
+      } else {
+        const body = (await request.json()) as { id?: string };
+        idToDelete = body.id || "";
+      }
+
+      if (!idToDelete) {
+        return jsonResponse({ error: "Missing shipment ID" }, 400);
+      }
+
+      const updated = await deleteShipmentFromDatabase(idToDelete);
+      return jsonResponse({
+        success: true,
+        count: updated.shipments.length,
+      });
     }
 
     // -------------------------------------------------------------
@@ -140,8 +249,28 @@ export async function handleApiRequest(request: Request): Promise<Response> {
       }));
 
       const updated = await saveDatabase((db) => {
-        if (processedRecords) db.payouts = processedRecords;
-        if (body.batches) db.payoutBatches = body.batches;
+        if (processedRecords) {
+          const map = new Map<string, PayoutRecord>();
+          for (const p of db.payouts || []) {
+            const key = p.dupKey || p.id || `${p.orderNumber}:${p.payoutDate || p.orderDate}`;
+            map.set(key, p);
+          }
+          for (const p of processedRecords) {
+            const key = p.dupKey || p.id || `${p.orderNumber}:${p.payoutDate || p.orderDate}`;
+            map.set(key, p);
+          }
+          db.payouts = Array.from(map.values());
+        }
+        if (body.batches) {
+          const bMap = new Map<string, ImportBatch>();
+          for (const b of db.payoutBatches || []) {
+            bMap.set(b.id, b);
+          }
+          for (const b of body.batches) {
+            bMap.set(b.id, b);
+          }
+          db.payoutBatches = Array.from(bMap.values());
+        }
         if (body.settings) db.payoutSettings = body.settings;
       });
 
@@ -161,6 +290,32 @@ export async function handleApiRequest(request: Request): Promise<Response> {
         db.payoutBatches = [];
       });
       return jsonResponse({ success: true });
+    }
+
+    // -------------------------------------------------------------
+    // POST /api/payouts/delete or DELETE /api/payouts/:id
+    // -------------------------------------------------------------
+    if (
+      (path === "/api/payouts/delete" && method === "POST") ||
+      (path.startsWith("/api/payouts/") && method === "DELETE")
+    ) {
+      let idToDelete = "";
+      if (method === "DELETE") {
+        idToDelete = decodeURIComponent(path.replace("/api/payouts/", ""));
+      } else {
+        const body = (await request.json()) as { id?: string };
+        idToDelete = body.id || "";
+      }
+
+      if (!idToDelete) {
+        return jsonResponse({ error: "Missing payout ID" }, 400);
+      }
+
+      const updated = await deletePayoutFromDatabase(idToDelete);
+      return jsonResponse({
+        success: true,
+        count: updated.payouts.length,
+      });
     }
 
     // -------------------------------------------------------------

@@ -42,6 +42,7 @@ import {
   saveShipmentBatches,
   saveShipmentRecords,
   saveShipmentSettings,
+  deleteShipmentRecord,
   DEFAULT_SHIPMENT_SETTINGS,
 } from "@/lib/shipment/store";
 import { downloadSampleShipmentTemplate, downloadShipmentExcel } from "@/lib/shipment/excel";
@@ -171,7 +172,11 @@ function ShipmentPage() {
     // Deduplicate against existing master dataset
     setStep(3);
     setProgress(75);
-    const seen = new Set(records.map((r) => r.dupKey));
+    // Fetch latest master records to guarantee previous data is never lost or overwritten
+    const latestStoredRecords = await loadShipmentRecords(true);
+    const baseRecords =
+      latestStoredRecords.length >= records.length ? latestStoredRecords : records;
+    const seen = new Set(baseRecords.map((r) => r.dupKey));
     const fresh: ShipmentRecord[] = [];
     let duplicates = 0;
     const importedAt = new Date().toISOString();
@@ -186,7 +191,11 @@ function ShipmentPage() {
 
     setStep(4);
     setProgress(85);
-    const merged = [...records, ...fresh];
+    // Previous records remain at the top, new orders are appended underneath
+    const merged = [...baseRecords, ...fresh];
+    const latestStoredBatches = await loadShipmentBatches();
+    const baseBatches =
+      latestStoredBatches.length >= batches.length ? latestStoredBatches : batches;
     const batch: ShipmentBatch = {
       id: crypto.randomUUID(),
       at: importedAt,
@@ -195,7 +204,7 @@ function ShipmentPage() {
       duplicates,
       errors: fileErrors.length,
     };
-    const nextBatches = [batch, ...batches];
+    const nextBatches = [batch, ...baseBatches];
     await Promise.all([saveShipmentRecords(merged), saveShipmentBatches(nextBatches)]);
     setRecords(merged);
     setBatches(nextBatches);
@@ -251,6 +260,11 @@ function ShipmentPage() {
     setFiles([]);
     setSummary(null);
     toast.success("All stored shipment data cleared");
+  }, []);
+
+  const handleDeleteRecord = useCallback(async (id: string) => {
+    const updated = await deleteShipmentRecord(id);
+    setRecords(updated);
   }, []);
 
   return (
@@ -416,7 +430,11 @@ function ShipmentPage() {
         {/* Master Table */}
         <div ref={tableRef} className="mt-10 pb-32 sm:pb-24">
           {ready ? (
-            <ShipmentTable records={records} avgRate={avgRate} />
+            <ShipmentTable
+              records={records}
+              avgRate={avgRate}
+              onDeleteRecord={handleDeleteRecord}
+            />
           ) : (
             <TableSkeleton
               title="Shipments master fleet"

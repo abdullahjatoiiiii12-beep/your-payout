@@ -35,6 +35,7 @@ import {
   saveBatches,
   saveRecords,
   saveSettings,
+  deletePayoutRecord,
   processAndMatchPayouts,
   DEFAULT_SETTINGS,
 } from "@/lib/payout/store";
@@ -78,7 +79,7 @@ function Index() {
   useEffect(() => {
     let active = true;
     (async () => {
-      const [r, b, s] = await Promise.all([loadRecords(), loadBatches(), loadSettings()]);
+      const [r, b, s] = await Promise.all([loadRecords(true), loadBatches(), loadSettings()]);
       if (!active) return;
       setRecords(r);
       setBatches(b);
@@ -92,21 +93,28 @@ function Index() {
 
   const totals = useMemo(() => {
     const gbp = records.reduce((s, r) => s + (r.gbpAmount ?? 0), 0);
+    const fileNames = Array.from(new Set(records.map((r) => r.sourceFile).filter(Boolean)));
+    const queueFileNames = files.map((f) => f.file.name);
+    const primaryFileName =
+      fileNames[0] || (batches[0]?.files?.[0] ?? "") || queueFileNames[0] || "";
+
     return {
       records: records.length,
       gbp,
       usd: gbp * avgRate,
       quantity: records.reduce((s, r) => s + (r.quantity ?? 0), 0),
       packages: records.reduce((s, r) => s + (r.packages ?? 0), 0),
+      fileName: primaryFileName,
+      fileNames: fileNames.length > 0 ? fileNames : (batches.flatMap((b) => b.files) ?? []),
       vendorBasePrice: records.reduce((s, r) => s + (r.vendorBasePrice ?? 0), 0),
       discount: records.reduce((s, r) => s + (r.discount ?? 0), 0),
       totalBasePrice: records.reduce((s, r) => s + (r.totalBasePrice ?? 0), 0),
       commission: records.reduce((s, r) => s + (r.commission ?? 0), 0),
       balance: records.reduce((s, r) => s + (r.balance ?? 0), 0),
-      pdfs: new Set(records.map((r) => r.sourceFile)).size,
+      pdfs: fileNames.length,
       lastUpdated: batches[0]?.at ?? null,
     };
-  }, [records, avgRate, batches]);
+  }, [records, avgRate, batches, files]);
 
   const addFiles = useCallback((incoming: File[]) => {
     setFiles((prev) => {
@@ -266,6 +274,11 @@ function Index() {
     toast.success("All stored payout data cleared");
   }, []);
 
+  const handleDeleteRecord = useCallback(async (id: string) => {
+    const updated = await deletePayoutRecord(id);
+    setRecords(updated);
+  }, []);
+
   return (
     <main className="relative min-h-screen overflow-x-hidden bg-background">
       <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-[46rem] aurora" />
@@ -378,7 +391,7 @@ function Index() {
 
         <div ref={tableRef} className="mt-10 pb-32 sm:pb-24">
           {ready ? (
-            <RecordsTable records={records} avgRate={avgRate} />
+            <RecordsTable records={records} avgRate={avgRate} onDeleteRecord={handleDeleteRecord} />
           ) : (
             <TableSkeleton title="Master records" rowCount={6} />
           )}

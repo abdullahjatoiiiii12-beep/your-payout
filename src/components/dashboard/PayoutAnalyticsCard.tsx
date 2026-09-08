@@ -414,12 +414,14 @@ export function PayoutAnalyticsCard() {
         </div>
       </div>
 
-      {/* Action: View Details -> Payout Page */}
+      {/* Action: View Details -> Navigates to dedicated Payout Details page */}
       <div className="mt-5">
-        <Link to="/" className="block">
+        <Link to="/payout-details" className="block">
           <Button
+            id="payout-chart-view-details-btn"
+            type="button"
             variant="outline"
-            className="w-full justify-center gap-2 rounded-full py-5 text-sm font-semibold border-border/80 hover:bg-secondary/80 transition-all active:scale-[0.99]"
+            className="w-full justify-center gap-2 rounded-full py-5 text-sm font-semibold border-border/80 hover:bg-secondary/80 transition-all active:scale-[0.99] cursor-pointer"
           >
             <span>View details</span>
             <ArrowRight className="h-4 w-4" />

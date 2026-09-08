@@ -18,7 +18,14 @@ let cachedBatches: ImportBatch[] | null = null;
 let cachedSettings: Settings | null = null;
 
 export async function loadRecords(forceRefresh = false): Promise<PayoutRecord[]> {
-  if (!forceRefresh && cachedRecords !== null) return cachedRecords;
+  if (!forceRefresh && cachedRecords !== null && cachedRecords.length > 0) return cachedRecords;
+
+  let localIdbRecords: PayoutRecord[] = [];
+  try {
+    localIdbRecords = (await get<PayoutRecord[]>(RECORDS_KEY)) ?? [];
+  } catch {
+    // IDB error fallback
+  }
 
   try {
     const res = await fetch("/api/payouts");
@@ -29,27 +36,53 @@ export async function loadRecords(forceRefresh = false): Promise<PayoutRecord[]>
         settings?: Settings;
       };
       if (Array.isArray(data.records)) {
-        cachedRecords = data.records;
-        if (Array.isArray(data.batches)) cachedBatches = data.batches;
-        if (data.settings) cachedSettings = data.settings;
+        if (data.records.length > 0) {
+          cachedRecords = data.records;
+          if (Array.isArray(data.batches)) cachedBatches = data.batches;
+          if (data.settings) cachedSettings = data.settings;
 
-        void set(RECORDS_KEY, data.records);
-        if (data.batches) void set(BATCHES_KEY, data.batches);
-        if (data.settings) void set(SETTINGS_KEY, data.settings);
+          void set(RECORDS_KEY, data.records);
+          if (data.batches) void set(BATCHES_KEY, data.batches);
+          if (data.settings) void set(SETTINGS_KEY, data.settings);
 
-        return cachedRecords;
+          return cachedRecords;
+        } else if (localIdbRecords.length > 0) {
+          // Self-heal: backend was empty but local storage has records -> restore to backend
+          cachedRecords = localIdbRecords;
+          void saveRecords(localIdbRecords);
+          return cachedRecords;
+        }
       }
     }
   } catch {
     // Fallback
   }
 
-  cachedRecords = (await get<PayoutRecord[]>(RECORDS_KEY)) ?? [];
+  cachedRecords = localIdbRecords;
   return cachedRecords;
 }
 
 export function getCachedRecords(): PayoutRecord[] {
   return cachedRecords ?? [];
+}
+
+export async function deletePayoutRecord(recordId: string): Promise<PayoutRecord[]> {
+  const current = cachedRecords ?? (await loadRecords());
+  const updated = current.filter((r) => r.id !== recordId && r.orderNumber !== recordId);
+  cachedRecords = updated;
+  await set(RECORDS_KEY, updated);
+
+  try {
+    await fetch("/api/payouts/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: recordId }),
+    });
+  } catch (e) {
+    console.warn("Failed to sync payout deletion to backend:", e);
+  }
+
+  return updated;
 }
 
 export async function saveRecords(records: PayoutRecord[]): Promise<void> {

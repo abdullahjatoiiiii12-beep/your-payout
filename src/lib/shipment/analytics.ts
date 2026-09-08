@@ -35,7 +35,7 @@ export interface ShipmentAnalyticsResult {
   totalDatasetRecords: number;
 }
 
-export function extractShipmentDateKey(r: ShipmentRecord): string | null {
+export function extractShipmentDateKey(r: ShipmentRecord): string {
   if (r.shipmentDate && typeof r.shipmentDate === "string" && r.shipmentDate.trim()) {
     const norm = normalizeDate(r.shipmentDate.trim());
     if (norm && /^\d{4}-\d{2}-\d{2}$/.test(norm)) {
@@ -50,7 +50,14 @@ export function extractShipmentDateKey(r: ShipmentRecord): string | null {
     }
   }
 
-  return null;
+  if (r.importedAt && typeof r.importedAt === "string" && r.importedAt.trim()) {
+    const norm = r.importedAt.trim().slice(0, 10);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(norm)) {
+      return norm;
+    }
+  }
+
+  return new Date().toISOString().slice(0, 10);
 }
 
 export function addDaysToDateKey(dateKey: string, days: number): string {
@@ -230,10 +237,10 @@ export function calculateShipmentAnalytics(
     changePercentage = 100;
   }
 
-  // Status Summary for records in scope
-  const targetRecords = currentPeriodRecords.length > 0 ? currentPeriodRecords : records;
+  // Status Summary across all dataset records so total & status breakdown
+  // accurately accumulate every record uploaded
   const statusSummary: ShipmentStatusSummary = {
-    total: targetRecords.length,
+    total: records.length,
     inTransit: 0,
     received: 0,
     pending: 0,
@@ -242,14 +249,19 @@ export function calculateShipmentAnalytics(
     exception: 0,
   };
 
-  for (const r of targetRecords) {
+  for (const r of records) {
     const cat = categorizeStatus(r.status);
     if (cat === "received") {
       statusSummary.received++;
-      if (r.status === "Delivered") statusSummary.delivered++;
+      if ((r.status || "").toLowerCase().includes("delivered")) statusSummary.delivered++;
     } else if (cat === "inTransit") {
       statusSummary.inTransit++;
-      if (r.status === "Dispatched") statusSummary.dispatched++;
+      if (
+        (r.status || "").toLowerCase().includes("dispatched") ||
+        (r.status || "").toLowerCase().includes("shipped")
+      ) {
+        statusSummary.dispatched++;
+      }
     } else if (cat === "pending") {
       statusSummary.pending++;
     } else {

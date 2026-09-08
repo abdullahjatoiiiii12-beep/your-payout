@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { ArrowUpDown, Inbox, Search } from "lucide-react";
+import { ArrowUpDown, Inbox, Search, Trash2 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -9,7 +9,19 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { toast } from "sonner";
 import type { PayoutRecord } from "@/lib/payout/types";
+import { deletePayoutRecord } from "@/lib/payout/store";
 import { PayoutMobileCard } from "./PayoutMobileCard";
 
 const ALL = "__all__";
@@ -18,7 +30,15 @@ const PAGE_SIZES = [25, 50, 100, 250];
 type SortKey = "date" | "amount";
 type DupFilter = "all" | "unique" | "duplicates";
 
-export function RecordsTable({ records, avgRate }: { records: PayoutRecord[]; avgRate: number }) {
+export function RecordsTable({
+  records,
+  avgRate,
+  onDeleteRecord,
+}: {
+  records: PayoutRecord[];
+  avgRate: number;
+  onDeleteRecord?: (id: string) => Promise<void> | void;
+}) {
   const [query, setQuery] = useState("");
   const [supplier, setSupplier] = useState(ALL);
   const [category, setCategory] = useState(ALL);
@@ -28,6 +48,8 @@ export function RecordsTable({ records, avgRate }: { records: PayoutRecord[]; av
   const [sortKey, setSortKey] = useState<SortKey>("date");
   const [asc, setAsc] = useState(false);
   const [page, setPage] = useState(1);
+  const [recordToDelete, setRecordToDelete] = useState<PayoutRecord | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const suppliers = useMemo(
     () => [...new Set(records.map((r) => r.supplier).filter(Boolean))].sort(),
@@ -201,6 +223,7 @@ export function RecordsTable({ records, avgRate }: { records: PayoutRecord[]; av
                   record={r}
                   index={(current - 1) * pageSize + i}
                   avgRate={avgRate}
+                  onDelete={() => setRecordToDelete(r)}
                 />
               ))}
             </div>
@@ -231,10 +254,13 @@ export function RecordsTable({ records, avgRate }: { records: PayoutRecord[]; av
                       "DIMENSIONS",
                       "COUNTRY",
                       "SUPPLIER",
+                      "ACTIONS",
                     ].map((h) => (
                       <th
                         key={h}
-                        className="whitespace-nowrap border-b border-border px-3 py-3 text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground"
+                        className={`whitespace-nowrap border-b border-border px-3 py-3 text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground ${
+                          h === "ACTIONS" ? "text-right pr-4" : ""
+                        }`}
                       >
                         {h}
                       </th>
@@ -277,6 +303,18 @@ export function RecordsTable({ records, avgRate }: { records: PayoutRecord[]; av
                       <Td>{r.dimensions}</Td>
                       <Td>{r.country}</Td>
                       <Td className="text-muted-foreground">{r.supplier}</Td>
+                      <Td className="text-right pr-4">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title="Delete payout record"
+                          aria-label={`Delete record for order ${r.orderNumber}`}
+                          className="h-8 w-8 rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
+                          onClick={() => setRecordToDelete(r)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </Td>
                     </tr>
                   ))}
                 </tbody>
@@ -314,6 +352,67 @@ export function RecordsTable({ records, avgRate }: { records: PayoutRecord[]; av
           </div>
         )}
       </div>
+
+      {/* Confirmation Dialog for Record Deletion */}
+      <AlertDialog
+        open={!!recordToDelete}
+        onOpenChange={(open) => !open && !isDeleting && setRecordToDelete(null)}
+      >
+        <AlertDialogContent className="max-w-md rounded-2xl">
+          <AlertDialogHeader>
+            <div className="flex items-center gap-2.5 text-destructive">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-destructive/10">
+                <Trash2 className="h-5 w-5 text-destructive" />
+              </div>
+              <AlertDialogTitle className="text-lg font-semibold">
+                Delete Payout Record?
+              </AlertDialogTitle>
+            </div>
+            <AlertDialogDescription className="pt-2 text-sm leading-relaxed text-muted-foreground">
+              Are you sure you want to delete order{" "}
+              <span className="font-semibold text-foreground">
+                #{recordToDelete?.orderNumber || "—"}
+              </span>
+              {recordToDelete?.productName ? ` (${recordToDelete.productName})` : ""}? This record
+              will be permanently removed from your master payout database.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="mt-4 gap-2 sm:gap-0">
+            <AlertDialogCancel
+              disabled={isDeleting}
+              className="rounded-xl"
+              onClick={() => setRecordToDelete(null)}
+            >
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isDeleting}
+              className="rounded-xl bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={async (e) => {
+                e.preventDefault();
+                if (!recordToDelete) return;
+                setIsDeleting(true);
+                try {
+                  if (onDeleteRecord) {
+                    await onDeleteRecord(recordToDelete.id);
+                  } else {
+                    await deletePayoutRecord(recordToDelete.id);
+                  }
+                  toast.success("Payout record deleted successfully");
+                  setRecordToDelete(null);
+                } catch (err) {
+                  console.error("Failed to delete record:", err);
+                  toast.error("Failed to delete payout record");
+                } finally {
+                  setIsDeleting(false);
+                }
+              }}
+            >
+              {isDeleting ? "Deleting..." : "Delete Record"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   );
 }

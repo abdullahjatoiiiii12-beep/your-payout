@@ -8,6 +8,7 @@ import {
   Clock,
   AlertTriangle,
   SlidersHorizontal,
+  Trash2,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -25,7 +26,19 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { toast } from "sonner";
 import type { ShipmentRecord, ShipmentStatus } from "@/lib/shipment/types";
+import { deleteShipmentRecord } from "@/lib/shipment/store";
 import { ShipmentMobileCard } from "./ShipmentMobileCard";
 
 const ALL = "__all__";
@@ -37,9 +50,11 @@ type DupFilter = "all" | "unique" | "duplicates";
 export function ShipmentTable({
   records,
   avgRate,
+  onDeleteRecord,
 }: {
   records: ShipmentRecord[];
   avgRate: number;
+  onDeleteRecord?: (id: string) => Promise<void> | void;
 }) {
   const [query, setQuery] = useState("");
   const [carrier, setCarrier] = useState(ALL);
@@ -49,10 +64,12 @@ export function ShipmentTable({
   const [month, setMonth] = useState(ALL);
   const [dupFilter, setDupFilter] = useState<DupFilter>("all");
   const [pageSize, setPageSize] = useState(100);
-  const [sortKey, setSortKey] = useState<SortKey>("date");
+  const [sortKey, setSortKey] = useState<SortKey | null>(null);
   const [asc, setAsc] = useState(false);
   const [page, setPage] = useState(1);
   const [activeRecord, setActiveRecord] = useState<ShipmentRecord | null>(null);
+  const [recordToDelete, setRecordToDelete] = useState<ShipmentRecord | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const carriers = useMemo(
     () => [...new Set(records.map((r) => r.carrier).filter(Boolean))].sort(),
@@ -102,19 +119,21 @@ export function ShipmentTable({
         .includes(q);
     });
 
-    out.sort((a, b) => {
-      let v = 0;
-      if (sortKey === "date") {
-        v = (a.shipmentDate || "").localeCompare(b.shipmentDate || "");
-      } else if (sortKey === "weight") {
-        v = (a.weightKg ?? 0) - (b.weightKg ?? 0);
-      } else if (sortKey === "cost") {
-        v = (a.shippingCost ?? 0) - (b.shippingCost ?? 0);
-      } else if (sortKey === "packages") {
-        v = (a.packages ?? 0) - (b.packages ?? 0);
-      }
-      return asc ? v : -v;
-    });
+    if (sortKey) {
+      out.sort((a, b) => {
+        let v = 0;
+        if (sortKey === "date") {
+          v = (a.shipmentDate || "").localeCompare(b.shipmentDate || "");
+        } else if (sortKey === "weight") {
+          v = (a.weightKg ?? 0) - (b.weightKg ?? 0);
+        } else if (sortKey === "cost") {
+          v = (a.shippingCost ?? 0) - (b.shippingCost ?? 0);
+        } else if (sortKey === "packages") {
+          v = (a.packages ?? 0) - (b.packages ?? 0);
+        }
+        return asc ? v : -v;
+      });
+    }
 
     return out;
   }, [records, query, carrier, supplier, country, status, month, dupFilter, sortKey, asc]);
@@ -365,6 +384,7 @@ export function ShipmentTable({
                   record={r}
                   index={(current - 1) * pageSize + i}
                   renderStatusBadge={renderStatusBadge}
+                  onDelete={() => setRecordToDelete(r)}
                 />
               ))}
             </div>
@@ -385,10 +405,13 @@ export function ShipmentTable({
                       "WEIGHT (KGS)",
                       "DIMENSIONS",
                       "DESTINATION",
+                      "ACTIONS",
                     ].map((h) => (
                       <th
                         key={h}
-                        className="whitespace-nowrap border-b border-border px-3 py-3 text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground"
+                        className={`whitespace-nowrap border-b border-border px-3 py-3 text-[11px] font-semibold uppercase tracking-[0.1em] text-muted-foreground ${
+                          h === "ACTIONS" ? "text-right pr-4" : ""
+                        }`}
                       >
                         {h}
                       </th>
@@ -426,6 +449,21 @@ export function ShipmentTable({
                       <Td>
                         {[r.destinationCity, r.destinationCountry].filter(Boolean).join(", ") ||
                           "—"}
+                      </Td>
+                      <Td className="text-right pr-4">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          title="Delete shipment record"
+                          aria-label={`Delete record for order ${r.orderNumber || r.trackingNumber}`}
+                          className="h-8 w-8 rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setRecordToDelete(r);
+                          }}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
                       </Td>
                     </tr>
                   ))}
@@ -539,6 +577,67 @@ export function ShipmentTable({
           )}
         </DialogContent>
       </Dialog>
+
+      {/* Confirmation Dialog for Record Deletion */}
+      <AlertDialog
+        open={!!recordToDelete}
+        onOpenChange={(open) => !open && !isDeleting && setRecordToDelete(null)}
+      >
+        <AlertDialogContent className="max-w-md rounded-2xl">
+          <AlertDialogHeader>
+            <div className="flex items-center gap-2.5 text-destructive">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-destructive/10">
+                <Trash2 className="h-5 w-5 text-destructive" />
+              </div>
+              <AlertDialogTitle className="text-lg font-semibold">
+                Delete Shipment Record?
+              </AlertDialogTitle>
+            </div>
+            <AlertDialogDescription className="pt-2 text-sm leading-relaxed text-muted-foreground">
+              Are you sure you want to delete order{" "}
+              <span className="font-semibold text-foreground">
+                #{recordToDelete?.orderNumber || recordToDelete?.trackingNumber || "—"}
+              </span>
+              {recordToDelete?.productName ? ` (${recordToDelete.productName})` : ""}? This record
+              will be permanently removed from your master shipment database.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="mt-4 gap-2 sm:gap-0">
+            <AlertDialogCancel
+              disabled={isDeleting}
+              className="rounded-xl"
+              onClick={() => setRecordToDelete(null)}
+            >
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isDeleting}
+              className="rounded-xl bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={async (e) => {
+                e.preventDefault();
+                if (!recordToDelete) return;
+                setIsDeleting(true);
+                try {
+                  if (onDeleteRecord) {
+                    await onDeleteRecord(recordToDelete.id);
+                  } else {
+                    await deleteShipmentRecord(recordToDelete.id);
+                  }
+                  toast.success("Shipment record deleted successfully");
+                  setRecordToDelete(null);
+                } catch (err) {
+                  console.error("Failed to delete record:", err);
+                  toast.error("Failed to delete shipment record");
+                } finally {
+                  setIsDeleting(false);
+                }
+              }}
+            >
+              {isDeleting ? "Deleting..." : "Delete Record"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   );
 }

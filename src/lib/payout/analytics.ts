@@ -13,6 +13,23 @@ export interface ChartDataPoint {
   ordersCount: number;
 }
 
+export interface PayoutKpiTotals {
+  records: number;
+  gbp: number;
+  usd: number;
+  quantity: number;
+  packages: number;
+  fileName: string;
+  fileNames: string[];
+  vendorBasePrice: number;
+  discount: number;
+  totalBasePrice: number;
+  commission: number;
+  balance: number;
+  pdfs: number;
+  lastUpdated?: string | null;
+}
+
 export interface PayoutAnalyticsResult {
   period: AnalyticsPeriod;
   currency: CurrencyCode;
@@ -26,6 +43,7 @@ export interface PayoutAnalyticsResult {
   endDate: string;
   chartData: ChartDataPoint[];
   totalDatasetRecords: number;
+  totals?: PayoutKpiTotals;
 }
 
 /**
@@ -133,6 +151,22 @@ export function calculatePayoutAnalytics(
 ): PayoutAnalyticsResult {
   const totalDatasetRecords = records.length;
 
+  const emptyTotals: PayoutKpiTotals = {
+    records: 0,
+    gbp: 0,
+    usd: 0,
+    quantity: 0,
+    packages: 0,
+    fileName: "",
+    fileNames: [],
+    vendorBasePrice: 0,
+    discount: 0,
+    totalBasePrice: 0,
+    commission: 0,
+    balance: 0,
+    pdfs: 0,
+  };
+
   if (totalDatasetRecords === 0) {
     return {
       period,
@@ -147,8 +181,27 @@ export function calculatePayoutAnalytics(
       endDate: "",
       chartData: [],
       totalDatasetRecords: 0,
+      totals: emptyTotals,
     };
   }
+
+  const gbpTotal = records.reduce((s, r) => s + (r.gbpAmount ?? 0), 0);
+  const fileNames = Array.from(new Set(records.map((r) => r.sourceFile).filter(Boolean)));
+  const datasetTotals: PayoutKpiTotals = {
+    records: records.length,
+    gbp: gbpTotal,
+    usd: gbpTotal * avgRate,
+    quantity: records.reduce((s, r) => s + (r.quantity ?? 0), 0),
+    packages: records.reduce((s, r) => s + (r.packages ?? 0), 0),
+    fileName: fileNames[0] || "",
+    fileNames,
+    vendorBasePrice: records.reduce((s, r) => s + (r.vendorBasePrice ?? 0), 0),
+    discount: records.reduce((s, r) => s + (r.discount ?? 0), 0),
+    totalBasePrice: records.reduce((s, r) => s + (r.totalBasePrice ?? 0), 0),
+    commission: records.reduce((s, r) => s + (r.commission ?? 0), 0),
+    balance: records.reduce((s, r) => s + (r.balance ?? 0), 0),
+    pdfs: fileNames.length,
+  };
 
   // 1. Group all database records by exact calendar date key (YYYY-MM-DD)
   // based on when the payout was actually uploaded / processed.
@@ -185,6 +238,7 @@ export function calculatePayoutAnalytics(
       endDate: "",
       chartData: [],
       totalDatasetRecords,
+      totals: datasetTotals,
     };
   }
 
@@ -265,5 +319,6 @@ export function calculatePayoutAnalytics(
     endDate,
     chartData,
     totalDatasetRecords,
+    totals: datasetTotals,
   };
 }

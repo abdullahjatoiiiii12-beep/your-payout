@@ -16,8 +16,15 @@ let cachedShipmentBatches: ShipmentBatch[] | null = null;
 let cachedShipmentSettings: ShipmentSettings | null = null;
 
 export async function loadShipmentRecords(forceRefresh = false): Promise<ShipmentRecord[]> {
-  if (!forceRefresh && cachedShipmentRecords !== null) {
+  if (!forceRefresh && cachedShipmentRecords !== null && cachedShipmentRecords.length > 0) {
     return cachedShipmentRecords;
+  }
+
+  let localIdbRecords: ShipmentRecord[] = [];
+  try {
+    localIdbRecords = (await get<ShipmentRecord[]>(SHIPMENT_RECORDS_KEY)) ?? [];
+  } catch {
+    // IDB error fallback
   }
 
   // Attempt to fetch fresh data from backend API
@@ -30,23 +37,30 @@ export async function loadShipmentRecords(forceRefresh = false): Promise<Shipmen
         settings?: ShipmentSettings;
       };
       if (Array.isArray(data.records)) {
-        cachedShipmentRecords = data.records;
-        if (Array.isArray(data.batches)) cachedShipmentBatches = data.batches;
-        if (data.settings) cachedShipmentSettings = data.settings;
+        if (data.records.length > 0) {
+          cachedShipmentRecords = data.records;
+          if (Array.isArray(data.batches)) cachedShipmentBatches = data.batches;
+          if (data.settings) cachedShipmentSettings = data.settings;
 
-        // Sync to IndexedDB for offline / instant availability
-        void set(SHIPMENT_RECORDS_KEY, data.records);
-        if (data.batches) void set(SHIPMENT_BATCHES_KEY, data.batches);
-        if (data.settings) void set(SHIPMENT_SETTINGS_KEY, data.settings);
+          // Sync to IndexedDB for offline / instant availability
+          void set(SHIPMENT_RECORDS_KEY, data.records);
+          if (data.batches) void set(SHIPMENT_BATCHES_KEY, data.batches);
+          if (data.settings) void set(SHIPMENT_SETTINGS_KEY, data.settings);
 
-        return cachedShipmentRecords;
+          return cachedShipmentRecords;
+        } else if (localIdbRecords.length > 0) {
+          // Self-heal: backend was empty but local storage has records -> restore to backend
+          cachedShipmentRecords = localIdbRecords;
+          void saveShipmentRecords(localIdbRecords);
+          return cachedShipmentRecords;
+        }
       }
     }
   } catch {
     // Fallback to IndexedDB if network fetch fails
   }
 
-  cachedShipmentRecords = (await get<ShipmentRecord[]>(SHIPMENT_RECORDS_KEY)) ?? [];
+  cachedShipmentRecords = localIdbRecords;
   return cachedShipmentRecords;
 }
 
@@ -56,6 +70,25 @@ export function getCachedShipmentRecords(): ShipmentRecord[] {
 
 export function setCachedShipmentRecords(records: ShipmentRecord[]): void {
   cachedShipmentRecords = records;
+}
+
+export async function deleteShipmentRecord(recordId: string): Promise<ShipmentRecord[]> {
+  const current = cachedShipmentRecords ?? (await loadShipmentRecords());
+  const updated = current.filter((r) => r.id !== recordId && r.orderNumber !== recordId);
+  cachedShipmentRecords = updated;
+  await set(SHIPMENT_RECORDS_KEY, updated);
+
+  try {
+    await fetch("/api/shipments/delete", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: recordId }),
+    });
+  } catch (e) {
+    console.warn("Failed to sync shipment deletion to backend:", e);
+  }
+
+  return updated;
 }
 
 export async function saveShipmentRecords(records: ShipmentRecord[]): Promise<void> {

@@ -1,13 +1,20 @@
 import { Link, useRouterState } from "@tanstack/react-router";
 import { motion } from "motion/react";
-import { FileSpreadsheet, Truck, LayoutDashboard } from "lucide-react";
+import { FileSpreadsheet, Truck, LayoutDashboard, User as UserIcon } from "lucide-react";
+import { useAuth } from "@/lib/supabase/auth-context";
 
 export function TopNav() {
   const routerState = useRouterState();
+  const { user } = useAuth();
   const currentPath = routerState.location.pathname;
-  const isDashboard = currentPath.startsWith("/dashboard");
+  const isDashboard =
+    currentPath.startsWith("/dashboard") || currentPath.startsWith("/payout-details");
   const isShipment = currentPath.startsWith("/shipment");
-  const isPayouts = !isDashboard && !isShipment;
+  const isAuth =
+    currentPath.startsWith("/auth") ||
+    currentPath.startsWith("/login") ||
+    currentPath.startsWith("/signup");
+  const isPayouts = currentPath === "/";
 
   const navItems = [
     {
@@ -27,6 +34,12 @@ export function TopNav() {
       label: "Dashboard",
       icon: LayoutDashboard,
       isActive: isDashboard,
+    },
+    {
+      to: "/auth" as const,
+      label: user ? "Account" : "Sign In",
+      icon: UserIcon,
+      isActive: isAuth,
     },
   ];
 

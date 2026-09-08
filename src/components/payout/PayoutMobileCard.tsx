@@ -1,15 +1,17 @@
 import { useState } from "react";
-import { ChevronDown, ChevronUp, Calendar, Tag } from "lucide-react";
+import { ChevronDown, ChevronUp, Calendar, Tag, Trash2 } from "lucide-react";
 import type { PayoutRecord } from "@/lib/payout/types";
 
 export function PayoutMobileCard({
   record,
   index,
   avgRate,
+  onDelete,
 }: {
   record: PayoutRecord;
   index: number;
   avgRate: number;
+  onDelete?: () => void;
 }) {
   const [isExpanded, setIsExpanded] = useState(false);
 
@@ -48,7 +50,7 @@ export function PayoutMobileCard({
           </h3>
         </div>
 
-        <div className="shrink-0 text-right">
+        <div className="shrink-0 flex items-center gap-1.5 text-right">
           {record.isDuplicate ? (
             <span className="inline-flex rounded-full border border-amber-500/30 bg-amber-500/15 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-400">
               Duplicate
@@ -58,6 +60,17 @@ export function PayoutMobileCard({
               <Calendar className="h-3 w-3" />
               {dateDisplay}
             </span>
+          )}
+          {onDelete && (
+            <button
+              type="button"
+              aria-label={`Delete record ${record.orderNumber}`}
+              title="Delete record"
+              onClick={onDelete}
+              className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-muted-foreground hover:bg-destructive/10 hover:text-destructive transition-colors"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+            </button>
           )}
         </div>
       </div>
